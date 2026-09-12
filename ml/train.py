@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     classification_report,
@@ -91,17 +92,26 @@ def write_metrics(metrics: dict, path: Path) -> None:
     )
 
 
+def export_artifacts(model, scaler, directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, directory / "model.pkl")
+    joblib.dump(scaler, directory / "scaler.pkl")
+
+
 def main() -> None:
     df = prepare_features()
     X_train_scaled, X_test_scaled, y_train, y_test, scaler = split_and_scale(df)
     model = train_model(X_train_scaled, y_train)
     metrics = evaluate(model, X_test_scaled, y_test)
     results_path = ML_DIR / "results" / "metrics.md"
+    artifacts_dir = ML_DIR / "artifacts"
     write_metrics(metrics, results_path)
+    export_artifacts(model, scaler, artifacts_dir)
     print(f"train rows: {len(y_train)}")
     print(f"test rows:  {len(y_test)}")
     print(f"coefficients: {dict(zip(FEATURE_COLS, model.coef_[0]))}")
     print(f"wrote {results_path}")
+    print(f"wrote {artifacts_dir / 'model.pkl'} and {artifacts_dir / 'scaler.pkl'}")
 
 
 if __name__ == "__main__":
