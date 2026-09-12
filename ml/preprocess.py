@@ -63,10 +63,44 @@ def add_employment_years(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def drop_leakage_and_multicollinear(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove columns that would leak the outcome or destabilize coefficients."""
+    out = df.copy()
+
+    # int_rate / grade / sub_grade are assigned *after* LendingClub prices the
+    # loan. Feeding them to a pre-origination model leaks the lender's own
+    # decision into the features.
+    leakage_pricing = ["int_rate", "grade", "sub_grade"]
+
+    # Payment and recovery fields exist only after the loan is issued. They
+    # describe the outcome, not the application, so they leak the label.
+    leakage_post_payment = ["total_pymnt", "recoveries", "last_pymnt_d"]
+
+    # dti is highly correlated with loan_to_income_ratio. Including both makes
+    # logistic-regression coefficients unstable and breaks explainability.
+    # Layer 1 of the product already gates on DTI, so the ML layer should not
+    # reuse it.
+    multicollinear = ["dti"]
+
+    # open_acc is a weak signal here and adds form complexity without enough
+    # predictive value to justify keeping it.
+    extra_complexity = ["open_acc"]
+
+    to_drop = [
+        col
+        for col in leakage_pricing + leakage_post_payment + multicollinear + extra_complexity
+        if col in out.columns
+    ]
+    return out.drop(columns=to_drop)
+
+
 def main() -> None:
     df = load_completed_loans()
     df = add_credit_score(df)
     df = add_employment_years(df)
+    print("columns before drop:", sorted(df.columns.tolist()))
+    df = drop_leakage_and_multicollinear(df)
+    print("columns after drop:", sorted(df.columns.tolist()))
     print(df[["fico_range_low", "fico_range_high", "credit_score", "emp_length", "employment_years"]].head())
     print("\nemployment_years missing:", df["employment_years"].isna().sum())
 
