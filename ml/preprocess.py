@@ -94,15 +94,49 @@ def drop_leakage_and_multicollinear(df: pd.DataFrame) -> pd.DataFrame:
     return out.drop(columns=to_drop)
 
 
-def main() -> None:
-    df = load_completed_loans()
+def add_loan_to_income_ratio(df: pd.DataFrame) -> pd.DataFrame:
+    """loan_amount / annual_income. Drop zero-income rows to avoid invalid ratios."""
+    out = df.copy()
+    out = out[out["annual_inc"] > 0].copy()
+    out["loan_to_income_ratio"] = out["loan_amnt"] / out["annual_inc"]
+    return out
+
+
+def impute_missing_with_median(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Median-impute remaining numeric holes (fit on this frame, used later with care)."""
+    out = df.copy()
+    for col in columns:
+        out[col] = out[col].fillna(out[col].median())
+    return out
+
+
+def add_target(df: pd.DataFrame) -> pd.DataFrame:
+    """Fully Paid = 1 (repaid), Charged Off = 0 (default)."""
+    out = df.copy()
+    out["target"] = (out["loan_status"] == "Fully Paid").astype(int)
+    return out
+
+
+def prepare_features(df: pd.DataFrame | None = None) -> pd.DataFrame:
+    if df is None:
+        df = load_completed_loans()
     df = add_credit_score(df)
     df = add_employment_years(df)
-    print("columns before drop:", sorted(df.columns.tolist()))
     df = drop_leakage_and_multicollinear(df)
-    print("columns after drop:", sorted(df.columns.tolist()))
-    print(df[["fico_range_low", "fico_range_high", "credit_score", "emp_length", "employment_years"]].head())
-    print("\nemployment_years missing:", df["employment_years"].isna().sum())
+    df = add_loan_to_income_ratio(df)
+    feature_cols = ["credit_score", "employment_years", "loan_to_income_ratio"]
+    df = impute_missing_with_median(df, feature_cols)
+    df = add_target(df)
+    return df
+
+
+def main() -> None:
+    df = prepare_features()
+    print(df[["credit_score", "employment_years", "loan_to_income_ratio", "target"]].head())
+    print("\nmissing after impute:")
+    print(df[["credit_score", "employment_years", "loan_to_income_ratio"]].isna().sum())
+    print("\nlabel balance:")
+    print(df["target"].value_counts(normalize=True))
 
 
 if __name__ == "__main__":
