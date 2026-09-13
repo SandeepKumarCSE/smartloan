@@ -1,616 +1,632 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  ShieldCheck, 
+  PieChart, 
+  Pie, 
+  Cell, 
+  Tooltip as RechartsTooltip, 
+  Legend, 
+  ResponsiveContainer 
+} from 'recharts';
+import { 
+  Building2, 
+  Clock, 
+  FileText, 
+  CheckCircle2, 
   AlertTriangle, 
   XCircle, 
-  CheckCircle2, 
-  BrainCircuit, 
-  Sparkles, 
-  Activity, 
-  RotateCcw, 
-  Send, 
+  Search, 
+  ArrowUpDown, 
+  ChevronRight, 
+  ArrowLeft, 
+  ShieldCheck, 
   UserCheck, 
-  Building2, 
   CreditCard, 
-  FileText,
-  Sliders,
-  ChevronRight,
-  Gauge
+  Briefcase, 
+  Layers,
+  History,
+  User,
+  Phone,
+  Mail,
+  MapPin,
+  Calendar,
+  Sparkles
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8000';
 
-const PRESETS = {
-  prime: {
-    title: '🟢 Prime Applicant',
-    subtitle: 'High income, clean history, low utilization',
-    data: {
-      applicant_id: 'APP-PRIME-882',
-      loan_amnt: 20000,
-      term: 36,
-      emp_length: 8,
-      annual_inc: 125000,
-      dti: 12.5,
-      fico_score: 780,
-      revol_util: 15.0,
-      inq_last_6mths: 0,
-      delinq_2yrs: 0,
-      pub_rec: 0,
-      open_acc: 12,
-      total_acc: 24,
-      home_ownership: 'MORTGAGE',
-      purpose: 'debt_consolidation'
-    }
-  },
-  borderline: {
-    title: '🟡 Borderline Review',
-    subtitle: 'Moderate income, 45% util, 1 inquiry',
-    data: {
-      applicant_id: 'APP-BORDER-419',
-      loan_amnt: 18000,
-      term: 36,
-      emp_length: 3,
-      annual_inc: 58000,
-      dti: 29.0,
-      fico_score: 665,
-      revol_util: 52.0,
-      inq_last_6mths: 1,
-      delinq_2yrs: 0,
-      pub_rec: 0,
-      open_acc: 7,
-      total_acc: 15,
-      home_ownership: 'RENT',
-      purpose: 'credit_card'
-    }
-  },
-  high_risk: {
-    title: '🔴 Subprime / High Risk',
-    subtitle: 'High DTI, low credit score, 60m term',
-    data: {
-      applicant_id: 'APP-RISK-903',
-      loan_amnt: 35000,
-      term: 60,
-      emp_length: 1,
-      annual_inc: 38000,
-      dti: 46.5,
-      fico_score: 550,
-      revol_util: 88.0,
-      inq_last_6mths: 4,
-      delinq_2yrs: 2,
-      pub_rec: 1,
-      open_acc: 5,
-      total_acc: 10,
-      home_ownership: 'RENT',
-      purpose: 'small_business'
-    }
-  }
-};
-
-const HOME_OPTIONS = [
-  { value: 'RENT', label: 'Rent' },
-  { value: 'OWN', label: 'Own (Outright)' },
-  { value: 'MORTGAGE', label: 'Mortgage' },
-  { value: 'OTHER', label: 'Other' },
-  { value: 'NONE', label: 'None' },
-  { value: 'ANY', label: 'Any (Baseline Category)' }
+// Mock Data for Top Summary Pie Charts
+const STATUS_PIE_DATA = [
+  { name: 'Approved', value: 60, color: '#10b981' },
+  { name: 'Pending Verification', value: 25, color: '#3b82f6' },
+  { name: 'Manual Review', value: 10, color: '#f59e0b' },
+  { name: 'Rejected', value: 5, color: '#f43f5e' }
 ];
 
-const PURPOSE_OPTIONS = [
-  { value: 'debt_consolidation', label: 'Debt Consolidation' },
-  { value: 'credit_card', label: 'Credit Card Refinance' },
-  { value: 'home_improvement', label: 'Home Improvement' },
-  { value: 'major_purchase', label: 'Major Purchase' },
-  { value: 'small_business', label: 'Small Business' },
-  { value: 'medical', label: 'Medical Expenses' },
-  { value: 'car', label: 'Auto Financing (Baseline Category)' },
-  { value: 'house', label: 'House Purchase' },
-  { value: 'moving', label: 'Moving / Relocation' },
-  { value: 'vacation', label: 'Vacation' },
-  { value: 'wedding', label: 'Wedding' },
-  { value: 'educational', label: 'Educational' },
-  { value: 'other', label: 'Other Purpose' }
+const PURPOSE_PIE_DATA = [
+  { name: 'Debt Consolidation', value: 40, color: '#6366f1' },
+  { name: 'Small Business', value: 25, color: '#ec4899' },
+  { name: 'Home Improvement', value: 20, color: '#14b8a6' },
+  { name: 'Credit Card Payoff', value: 15, color: '#8b5cf6' }
 ];
 
 export default function App() {
-  const [formData, setFormData] = useState(PRESETS.prime.data);
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [health, setHealth] = useState(null);
+  const [activeTab, setActiveTab] = useState('PENDING'); // 'PENDING', 'AUDIT', 'MANUAL'
+  const [pendingApps, setPendingApps] = useState([]);
+  const [selectedAppId, setSelectedAppId] = useState(null);
+  const [selectedAppDetail, setSelectedAppDetail] = useState(null);
+  const [loadingList, setLoadingList] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState('DESC'); // 'DESC' = most recent first
 
+  // Fetch pending applications queue on load and tab change
   useEffect(() => {
-    fetchHealth();
+    fetchPendingApplications();
   }, []);
 
-  const fetchHealth = async () => {
+  const fetchPendingApplications = async () => {
+    setLoadingList(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/health`);
+      const res = await fetch(`${API_BASE_URL}/api/applications?status=PENDING_VERIFICATION`);
       if (res.ok) {
         const data = await res.json();
-        setHealth(data);
+        setPendingApps(data);
       }
     } catch (e) {
-      console.warn('Backend server connection check failed', e);
-    }
-  };
-
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const applyPreset = (presetKey) => {
-    setFormData(PRESETS[presetKey].data);
-    setResult(null);
-  };
-
-  const handleSubmit = async (e) => {
-    if (e) e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/predict`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
-      }
-
-      const data = await response.json();
-      setResult(data);
-    } catch (err) {
-      setError(err.message || 'Failed to connect to decision engine backend');
+      console.warn('Failed to fetch pending applications', e);
     } finally {
-      setLoading(false);
+      setLoadingList(false);
     }
   };
 
-  const getDecisionBadge = (decision) => {
-    switch (decision) {
-      case 'APPROVED':
-        return (
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-semibold text-sm">
-            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-            <span>APPROVED — Straight-Through Processing</span>
-          </div>
-        );
-      case 'MANUAL_REVIEW':
-        return (
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 font-semibold text-sm">
-            <AlertTriangle className="w-5 h-5 text-amber-400" />
-            <span>MANUAL REVIEW — Routed to Underwriter Queue</span>
-          </div>
-        );
-      case 'REJECTED':
-      default:
-        return (
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 font-semibold text-sm">
-            <XCircle className="w-5 h-5 text-rose-400" />
-            <span>REJECTED — Adverse Action Notice Issued</span>
-          </div>
-        );
+  const handleSelectApplication = async (appId) => {
+    setSelectedAppId(appId);
+    setLoadingDetail(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/applications/${appId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedAppDetail(data);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch application detail', e);
+    } finally {
+      setLoadingDetail(false);
     }
   };
+
+  const handleBackToDashboard = () => {
+    setSelectedAppId(null);
+    setSelectedAppDetail(null);
+    fetchPendingApplications();
+  };
+
+  // Filtered & Sorted Queue
+  const processedQueue = useMemo(() => {
+    let list = [...pendingApps];
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        a => (a.full_name || a.applicant_name || '').toLowerCase().includes(q) ||
+             (a.applicant_id || '').toLowerCase().includes(q) ||
+             (a.purpose || '').toLowerCase().includes(q)
+      );
+    }
+
+    list.sort((a, b) => {
+      const timeA = new Date(a.timestamp || 0).getTime();
+      const timeB = new Date(b.timestamp || 0).getTime();
+      return sortOrder === 'DESC' ? timeB - timeA : timeA - timeB;
+    });
+
+    return list;
+  }, [pendingApps, searchQuery, sortOrder]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-blue-500 selection:text-white pb-20">
-      {/* Top Header Navigation */}
-      <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-blue-600 selection:text-white pb-20">
+      
+      {/* Top Bank Admin Header */}
+      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400">
-              <BrainCircuit className="w-6 h-6" />
+            <div className="p-2.5 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30">
+              <Building2 className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight">SmartLoan</span>
-                <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono font-medium">Underwriter Portal</span>
+                <h1 className="font-bold text-lg tracking-tight text-white">SmartLoan Underwriter Portal</h1>
+                <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono font-medium">Bank Employee Review</span>
               </div>
-              <p className="text-xs text-slate-400">Custom 30-Feature ML Logistic Regression Model Tester</p>
+              <p className="text-xs text-slate-400">Layer 1 DTI Verification & Internal Review Queue</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs">
-              <div className={`w-2 h-2 rounded-full ${health ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="text-slate-300">
-                {health ? `API Engine Online (${health.features_count} Features)` : 'Connecting to backend...'}
-              </span>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-slate-300 font-mono">Operations System Online</span>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="mx-auto max-w-7xl px-6 pt-8">
+      {/* Main Body */}
+      <main className="mx-auto max-w-7xl px-6 pt-8 space-y-8">
         
-        {/* Preset Selection Toolbar */}
-        <div className="mb-8 p-5 rounded-2xl glass-panel">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-400" />
-                Quick Test Scenarios (1-Click Fill)
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">Select a pre-configured applicant profile to benchmark model predictions</p>
-            </div>
-          </div>
+        {/* If Application Detail View is open */}
+        {selectedAppId && selectedAppDetail ? (
+          <ApplicationDetail 
+            app={selectedAppDetail} 
+            loading={loadingDetail} 
+            onBack={handleBackToDashboard} 
+          />
+        ) : (
+          <>
+            {/* TOP DASHBOARD OVERVIEW SECTION */}
+            <DashboardOverview pendingCount={pendingApps.length} />
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {Object.entries(PRESETS).map(([key, preset]) => (
-              <button
-                key={key}
-                onClick={() => applyPreset(key)}
-                type="button"
-                className="flex flex-col text-left p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-900 transition-all group cursor-pointer"
-              >
-                <span className="text-xs font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
-                  {preset.title}
-                </span>
-                <span className="text-[11px] text-slate-400 mt-1">
-                  {preset.subtitle}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          
-          {/* Left Side: Applicant Input Form */}
-          <div className="lg:col-span-7 space-y-6">
-            <form onSubmit={handleSubmit} className="p-6 rounded-2xl glass-panel space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
-                <h3 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-                  <Sliders className="w-5 h-5 text-blue-400" />
-                  Applicant Financial & Credit Inputs
-                </h3>
-                <span className="text-xs font-mono text-slate-400">{formData.applicant_id}</span>
-              </div>
-
-              {/* Section 1: Financial & Credit Basics */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Financial & Credit Benchmarks</h4>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Annual Income ($)</label>
-                    <input
-                      type="number"
-                      value={formData.annual_inc}
-                      onChange={(e) => handleInputChange('annual_inc', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">FICO Credit Score (300-850)</label>
-                    <input
-                      type="number"
-                      min="300"
-                      max="850"
-                      value={formData.fico_score}
-                      onChange={(e) => handleInputChange('fico_score', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Debt-To-Income DTI (%)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={formData.dti}
-                      onChange={(e) => handleInputChange('dti', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Revolving Utilization (%)</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={formData.revol_util}
-                      onChange={(e) => handleInputChange('revol_util', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 2: Loan Request Specifications */}
-              <div className="space-y-4 pt-2 border-t border-slate-800/60">
-                <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Loan Specifications</h4>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Requested Amount ($)</label>
-                    <input
-                      type="number"
-                      value={formData.loan_amnt}
-                      onChange={(e) => handleInputChange('loan_amnt', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Term (Months)</label>
-                    <select
-                      value={formData.term}
-                      onChange={(e) => handleInputChange('term', parseInt(e.target.value, 10))}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    >
-                      <option value={36}>36 Months</option>
-                      <option value={60}>60 Months</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Loan Purpose</label>
-                    <select
-                      value={formData.purpose}
-                      onChange={(e) => handleInputChange('purpose', e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    >
-                      {PURPOSE_OPTIONS.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Section 3: Bureau Credit History */}
-              <div className="space-y-4 pt-2 border-t border-slate-800/60">
-                <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider">Bureau History & Stability</h4>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Employment Yrs (0-10)</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      max="10"
-                      value={formData.emp_length}
-                      onChange={(e) => handleInputChange('emp_length', parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Inquiries (Past 6M)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.inq_last_6mths}
-                      onChange={(e) => handleInputChange('inq_last_6mths', parseInt(e.target.value, 10) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Delinquencies (Past 2Y)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.delinq_2yrs}
-                      onChange={(e) => handleInputChange('delinq_2yrs', parseInt(e.target.value, 10) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Public Records</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.pub_rec}
-                      onChange={(e) => handleInputChange('pub_rec', parseInt(e.target.value, 10) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Open Accounts</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.open_acc}
-                      onChange={(e) => handleInputChange('open_acc', parseInt(e.target.value, 10) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5 font-medium">Total Accounts</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={formData.total_acc}
-                      onChange={(e) => handleInputChange('total_acc', parseInt(e.target.value, 10) || 0)}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1.5 font-medium">Home Ownership Status</label>
-                  <select
-                    value={formData.home_ownership}
-                    onChange={(e) => handleInputChange('home_ownership', e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-blue-500"
-                  >
-                    {HOME_OPTIONS.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Submit Action */}
-              <div className="pt-4 flex items-center justify-end gap-3">
+            {/* NAVIGATION TABS BELOW CHARTS */}
+            <div className="border-b border-slate-800 flex items-center justify-between pt-2">
+              <nav className="flex gap-2">
                 <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition-all cursor-pointer disabled:opacity-50"
+                  onClick={() => setActiveTab('PENDING')}
+                  className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                    activeTab === 'PENDING'
+                      ? 'border-blue-500 bg-slate-900/80 text-blue-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                  }`}
                 >
-                  {loading ? (
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      <span>Run ML Risk Model & Decision Pipeline</span>
-                    </>
-                  )}
+                  <Clock className="w-4 h-4" />
+                  <span>Pending Verification ({pendingApps.length})</span>
                 </button>
-              </div>
-            </form>
-          </div>
 
-          {/* Right Side: Prediction & Explanation Output */}
-          <div className="lg:col-span-5 space-y-6">
-            
-            {error && (
-              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">Inference Error</p>
-                  <p className="text-xs text-rose-300/80 mt-1">{error}</p>
-                </div>
-              </div>
+                <button
+                  onClick={() => setActiveTab('MANUAL')}
+                  className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                    activeTab === 'MANUAL'
+                      ? 'border-blue-500 bg-slate-900/80 text-blue-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                  }`}
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>Manual Review</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('AUDIT')}
+                  className={`px-4 py-2.5 rounded-t-xl text-xs font-semibold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                    activeTab === 'AUDIT'
+                      ? 'border-blue-500 bg-slate-900/80 text-blue-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                  }`}
+                >
+                  <History className="w-4 h-4" />
+                  <span>Audit Log</span>
+                </button>
+              </nav>
+
+              <button
+                onClick={fetchPendingApplications}
+                className="text-xs text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <span>Refresh Queue</span>
+              </button>
+            </div>
+
+            {/* TAB 1: PENDING VERIFICATION LIST (Fully Built) */}
+            {activeTab === 'PENDING' && (
+              <PendingVerificationList 
+                queue={processedQueue}
+                loading={loadingList}
+                searchQuery={searchQuery}
+                onSearchChange={setSearchQuery}
+                sortOrder={sortOrder}
+                onSortToggle={() => setSortOrder(prev => prev === 'DESC' ? 'ASC' : 'DESC')}
+                onSelectApp={handleSelectApplication}
+              />
             )}
 
-            {!result && !loading && !error && (
-              <div className="p-10 rounded-2xl glass-panel text-center flex flex-col items-center justify-center min-h-[420px]">
-                <div className="p-4 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 mb-4">
-                  <Gauge className="w-10 h-10" />
+            {/* TAB 2: MANUAL REVIEW (Placeholder) */}
+            {activeTab === 'MANUAL' && (
+              <div className="p-12 rounded-2xl bg-slate-900/60 border border-slate-800 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 mx-auto flex items-center justify-center">
+                  <AlertTriangle className="w-6 h-6" />
                 </div>
-                <h3 className="text-base font-semibold text-slate-200">Model Output & Explainability Dashboard</h3>
-                <p className="text-xs text-slate-400 max-w-sm mt-2">
-                  Submit the form or click one of the quick test scenario presets above to execute real-time model inference.
+                <h3 className="text-base font-semibold text-slate-200">Manual Review Queue — Coming Soon</h3>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  Secondary underwriter overrides and manual review queues will be integrated in the next operational milestone.
                 </p>
               </div>
             )}
 
-            {result && (
-              <div className="space-y-6">
-                
-                {/* Decision Summary Panel */}
-                <div className="p-6 rounded-2xl glass-panel-glow space-y-5">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                    <span className="text-xs text-slate-400 font-mono">REQ ID: {result.request_id}</span>
-                    <span className="text-xs text-slate-400">{new Date(result.timestamp).toLocaleTimeString()}</span>
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-slate-400 uppercase tracking-wider mb-2 font-medium">Final Credit Decision</div>
-                    {getDecisionBadge(result.decision)}
-                  </div>
-
-                  {/* Probability Gauge Progress Bar */}
-                  <div className="space-y-2 pt-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-300 font-medium">Repayment Probability Score</span>
-                      <span className="font-mono text-sm font-bold text-blue-400">
-                        {(result.risk_score * 100).toFixed(1)}%
-                      </span>
-                    </div>
-
-                    <div className="w-full h-3 rounded-full bg-slate-900 border border-slate-800 overflow-hidden p-0.5">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-700 ${
-                          result.risk_score >= 0.75 
-                            ? 'bg-gradient-to-r from-emerald-500 to-teal-400' 
-                            : result.risk_score >= 0.65 
-                              ? 'bg-gradient-to-r from-amber-500 to-yellow-400' 
-                              : 'bg-gradient-to-r from-rose-500 to-pink-500'
-                        }`}
-                        style={{ width: `${Math.max(5, result.risk_score * 100)}%` }}
-                      />
-                    </div>
-
-                    <div className="flex justify-between text-[10px] text-slate-500 font-mono pt-0.5">
-                      <span>0% (Default)</span>
-                      <span>65% (Review Line)</span>
-                      <span>75% (Approve)</span>
-                      <span>100%</span>
-                    </div>
-                  </div>
-
-                  {/* Layer 1 Rule Status */}
-                  <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className={`w-4 h-4 ${result.layer1_passed ? 'text-emerald-400' : 'text-rose-400'}`} />
-                      <span className="text-xs font-medium text-slate-300">Layer 1 Rule Gatekeeper</span>
-                    </div>
-                    <span className={`text-xs font-semibold ${result.layer1_passed ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {result.layer1_passed ? 'PASSED' : 'TRIGGERED REJECTION'}
-                    </span>
-                  </div>
+            {/* TAB 3: AUDIT LOG (Placeholder) */}
+            {activeTab === 'AUDIT' && (
+              <div className="p-12 rounded-2xl bg-slate-900/60 border border-slate-800 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mx-auto flex items-center justify-center">
+                  <History className="w-6 h-6" />
                 </div>
-
-                {/* Adverse Action Notice Reasons */}
-                {result.adverse_reasons && result.adverse_reasons.length > 0 && (
-                  <div className="p-5 rounded-2xl glass-panel border-rose-500/20 bg-rose-950/10 space-y-3">
-                    <h4 className="text-xs font-semibold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <AlertTriangle className="w-4 h-4 text-rose-400" />
-                      Adverse Action Disclosures (ECOA Notice)
-                    </h4>
-                    <p className="text-xs text-slate-400">Legal denial factors generated from logistic regression coefficients:</p>
-                    
-                    <ul className="space-y-2 pt-1">
-                      {result.adverse_reasons.map((reason, idx) => (
-                        <li key={idx} className="flex items-start gap-2 text-xs text-slate-200">
-                          <span className="text-rose-400 font-mono mt-0.5">•</span>
-                          <span>{reason}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Top Model Weight Contributions */}
-                <div className="p-5 rounded-2xl glass-panel space-y-3">
-                  <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center justify-between">
-                    <span>Feature Weight Breakdown</span>
-                    <span className="text-[10px] text-slate-500 font-mono">Logistic Coef × Scaled Input</span>
-                  </h4>
-
-                  <div className="space-y-2">
-                    {result.top_feature_contributions.map((c, idx) => (
-                      <div key={idx} className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between text-xs">
-                        <div>
-                          <p className="font-medium text-slate-200">{c.label}</p>
-                          <p className="text-[10px] font-mono text-slate-400">Raw: {String(c.raw_value)} | Scaled: {c.scaled_value}</p>
-                        </div>
-                        <div className={`font-mono text-xs font-semibold px-2 py-1 rounded ${
-                          c.direction === 'REDUCES_RISK' || c.impact_score < 0
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                            : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                        }`}>
-                          {c.impact_score > 0 ? `+${c.impact_score}` : c.impact_score}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
+                <h3 className="text-base font-semibold text-slate-200">Audit Log & Decision History — Coming Soon</h3>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  Internal decision logs, historical audit trails, and system decision records will be displayed here.
+                </p>
               </div>
             )}
+          </>
+        )}
+
+      </main>
+    </div>
+  );
+}
+
+{/* SUB-COMPONENT 1: Dashboard Overview (3 Summary Cards + 2 Recharts Pie Charts) */}
+function DashboardOverview({ pendingCount }) {
+  return (
+    <div className="space-y-6">
+      
+      {/* 3 Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        
+        {/* Card 1: Pending Verification */}
+        <div className="p-5 rounded-2xl bg-slate-900/80 border border-blue-500/30 shadow-lg relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 text-blue-400 group-hover:scale-110 transition-transform">
+            <Clock className="w-20 h-20" />
+          </div>
+          <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider block">Pending Verification</span>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold font-mono text-white">{pendingCount}</span>
+            <span className="text-xs text-slate-400">Applications</span>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2">Awaiting employee credit check & document review</p>
+        </div>
+
+        {/* Card 2: Manual Review (Stub) */}
+        <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-lg relative overflow-hidden">
+          <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider block">Manual Review Queue</span>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold font-mono text-slate-300">0</span>
+            <span className="text-xs text-slate-500">(Stub)</span>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2">Section built in upcoming phase</p>
+        </div>
+
+        {/* Card 3: Total Processed Today (Stub) */}
+        <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 shadow-lg relative overflow-hidden">
+          <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider block">Total Processed Today</span>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold font-mono text-slate-300">0</span>
+            <span className="text-xs text-slate-500">(Stub)</span>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-2">Section built in upcoming phase</p>
+        </div>
+
+      </div>
+
+      {/* 2 Recharts Pie Charts Side by Side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Pie Chart 1: Applications by Status */}
+        <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-200">Application Breakdown by Status</h3>
+            <span className="text-[10px] text-slate-500 font-mono">Mock Distribution Data</span>
           </div>
 
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie
+                  data={STATUS_PIE_DATA}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={85}
+                  paddingAngle={4}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {STATUS_PIE_DATA.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <RechartsTooltip 
+                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }} 
+                />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-      </main>
+
+        {/* Pie Chart 2: Pending Applications by Purpose */}
+        <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-200">Pending Queue by Loan Purpose</h3>
+            <span className="text-[10px] text-slate-500 font-mono">Mock Purpose Distribution</span>
+          </div>
+
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie
+                  data={PURPOSE_PIE_DATA}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={85}
+                  paddingAngle={4}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {PURPOSE_PIE_DATA.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <RechartsTooltip 
+                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '12px' }} 
+                />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
+
+{/* SUB-COMPONENT 2: Pending Verification List */}
+function PendingVerificationList({ queue, loading, searchQuery, onSearchChange, sortOrder, onSortToggle, onSelectApp }) {
+  return (
+    <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-5">
+      
+      {/* Search & Sort Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by applicant name, ID, or purpose..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+          />
+        </div>
+
+        <button
+          onClick={onSortToggle}
+          className="px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 flex items-center gap-2 hover:bg-slate-900 transition-colors cursor-pointer"
+        >
+          <ArrowUpDown className="w-3.5 h-3.5 text-blue-400" />
+          <span>Sort Date: {sortOrder === 'DESC' ? 'Most Recent First' : 'Oldest First'}</span>
+        </button>
+      </div>
+
+      {/* Applications Table */}
+      {loading ? (
+        <div className="p-12 text-center text-xs text-slate-500">
+          Loading pending verification queue...
+        </div>
+      ) : queue.length === 0 ? (
+        <div className="p-12 text-center text-xs text-slate-500 space-y-1">
+          <p className="font-semibold text-slate-400">No applications awaiting verification</p>
+          <p>Submit a new application from the Applicant Portal (Port 5173) to populate this queue.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-800">
+          <table className="w-full text-left text-xs text-slate-300">
+            <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider font-mono text-[11px] border-b border-slate-800">
+              <tr>
+                <th className="py-3 px-4">Applicant Name</th>
+                <th className="py-3 px-4">App ID</th>
+                <th className="py-3 px-4">Requested Loan</th>
+                <th className="py-3 px-4">Purpose</th>
+                <th className="py-3 px-4">Submitted Date</th>
+                <th className="py-3 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {queue.map((app) => (
+                <tr 
+                  key={app.request_id || app.applicant_id}
+                  onClick={() => onSelectApp(app.applicant_id || app.request_id)}
+                  className="hover:bg-slate-800/50 transition-colors cursor-pointer group"
+                >
+                  <td className="py-3.5 px-4 font-semibold text-slate-100 group-hover:text-blue-400 transition-colors">
+                    {app.full_name || app.applicant_name || 'N/A'}
+                  </td>
+                  <td className="py-3.5 px-4 font-mono text-slate-400">
+                    {app.applicant_id || app.request_id}
+                  </td>
+                  <td className="py-3.5 px-4 font-mono font-medium text-slate-200">
+                    ₹{parseFloat(app.loan_amount_requested || app.loan_amnt || 0).toLocaleString('en-IN')}
+                  </td>
+                  <td className="py-3.5 px-4 text-slate-300">
+                    <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700/80 text-[11px]">
+                      {app.purpose}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 text-slate-400">
+                    {app.timestamp ? new Date(app.timestamp).toLocaleString() : 'Just now'}
+                  </td>
+                  <td className="py-3.5 px-4 text-right">
+                    <span className="inline-flex items-center gap-1 text-xs text-blue-400 font-medium group-hover:translate-x-1 transition-transform">
+                      Review <ChevronRight className="w-3.5 h-3.5" />
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+{/* SUB-COMPONENT 3: Application Detail View */}
+function ApplicationDetail({ app, loading, onBack }) {
+  if (loading || !app) {
+    return (
+      <div className="p-12 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+        Loading application details...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      
+      {/* Top Action Bar */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={onBack}
+          className="text-xs text-slate-400 hover:text-slate-100 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Dashboard</span>
+        </button>
+
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500 font-mono">App ID: {app.applicant_id}</span>
+          <span className="px-3 py-1 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-400 font-semibold text-xs flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
+            <span>PENDING_VERIFICATION</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Detail Card Container */}
+      <div className="p-8 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-8 shadow-2xl">
+        
+        {/* Header */}
+        <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-xl font-bold text-slate-100">{app.full_name || app.applicant_name}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Submitted on {app.timestamp ? new Date(app.timestamp).toLocaleString() : 'N/A'}</p>
+          </div>
+        </div>
+
+        {/* Section 1: Personal Information */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <User className="w-4 h-4" />
+            Personal Information
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-500 block">Full Name:</span>
+              <span className="font-semibold text-slate-200">{app.full_name || app.applicant_name}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Date of Birth:</span>
+              <span className="font-mono text-slate-200">{app.date_of_birth || 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Phone Number:</span>
+              <span className="font-mono text-slate-200">{app.phone_number || 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Email Address:</span>
+              <span className="text-slate-200">{app.email || 'N/A'}</span>
+            </div>
+            <div className="col-span-full">
+              <span className="text-slate-500 block">Address:</span>
+              <span className="text-slate-200">{app.address || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: Identity & Mock PAN (with Run Credit Check Placeholder Button) */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <CreditCard className="w-4 h-4" />
+            Identity Verification
+          </h3>
+          <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+            <div>
+              <span className="text-slate-500 block">Mock PAN Card Number:</span>
+              <span className="font-mono font-bold text-lg text-white tracking-widest">{app.mock_pan || app.pan_number || 'ABCDE1234F'}</span>
+              <p className="text-[10px] text-slate-500 mt-0.5">Mock PAN for demo & credit bureau lookup</p>
+            </div>
+
+            {/* Placeholder Button: Run Credit Check */}
+            <button
+              onClick={() => alert('Run Credit Check logic will be integrated in upcoming phase!')}
+              type="button"
+              className="px-5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition-colors cursor-pointer flex items-center gap-2"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+              <span>Run Credit Check (Placeholder)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Section 3: Loan Details */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            Loan Details
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-500 block">Loan Amount Requested:</span>
+              <span className="font-mono text-base font-bold text-blue-400">
+                ₹{parseFloat(app.loan_amount_requested || app.loan_amnt || 0).toLocaleString('en-IN')}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Loan Term:</span>
+              <span className="font-semibold text-slate-200">{app.term} Months</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Loan Purpose:</span>
+              <span className="font-semibold text-slate-200">{app.purpose}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4: Financial Information & Computed DTI */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-2">
+            <Briefcase className="w-4 h-4" />
+            Financial Information & Computed DTI
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+            <div>
+              <span className="text-slate-500 block">Annual Income:</span>
+              <span className="font-mono font-semibold text-slate-200">
+                ₹{parseFloat(app.annual_income || app.annual_inc || 0).toLocaleString('en-IN')}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Employment Tenure:</span>
+              <span className="font-semibold text-slate-200">{app.employment_years || app.emp_length || 0} Years</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Home Ownership:</span>
+              <span className="font-semibold text-slate-200">{app.home_ownership}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Existing Monthly EMI:</span>
+              <span className="font-mono font-semibold text-slate-200">
+                ₹{parseFloat(app.existing_monthly_debt_payments || app.existing_monthly_emi || 0).toLocaleString('en-IN')}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Pre-Screened DTI:</span>
+              <span className={`font-mono text-sm font-bold ${app.calculated_dti > 43 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                {app.calculated_dti}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
     </div>
   );
 }

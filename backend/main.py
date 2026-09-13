@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from fastapi import FastAPI, HTTPException
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine import engine
@@ -34,7 +35,24 @@ def health_check():
         "model_loaded": engine.model is not None,
         "scaler_loaded": engine.scaler is not None,
         "features_count": len(engine.scaler.mean_) if engine.scaler else 0,
+        "pending_applications_count": len(engine.get_applications("PENDING_VERIFICATION")),
     }
+
+
+@app.get("/api/applications")
+def list_applications(status: Optional[str] = Query(default=None)):
+    """Fetch applications, optionally filtered by status e.g. PENDING_VERIFICATION."""
+    return engine.get_applications(status)
+
+
+@app.get("/api/applications/{id}")
+@app.get("/api/v1/loans/{id}")
+def get_application_detail(id: str):
+    """Fetch full application details by ID."""
+    app_detail = engine.get_application_by_id(id)
+    if not app_detail:
+        raise HTTPException(status_code=404, detail=f"Application {id} not found")
+    return app_detail
 
 
 @app.post("/api/applications", response_model=DecisionResponse)
@@ -42,7 +60,9 @@ def health_check():
 def submit_application(payload: LoanApplicationRequest):
     try:
         decision = engine.predict(payload)
-        logger.info(f"Application {decision.request_id} submitted by {decision.applicant_name}: status={decision.status}, decision={decision.decision}, dti={decision.calculated_dti}%")
+        logger.info(
+            f"Application {decision.request_id} submitted by {decision.applicant_name}: status={decision.status}, decision={decision.decision}, dti={decision.calculated_dti}%"
+        )
         return decision
     except Exception as e:
         logger.error(f"Error processing loan application: {str(e)}", exc_info=True)
