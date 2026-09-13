@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import datetime
+import math
 from pathlib import Path
 import uuid
 from typing import Dict, List, Tuple
 import joblib
 import numpy as np
+import pandas as pd
 
 from app.encoder import FEATURE_COLUMNS, encode_application
 from app.schemas import DecisionResponse, FeatureContribution, LoanApplicationRequest
+
+# ASSUMED_RATE = 13.0 (flat, hardcoded, annual % placeholder rate for DTI pre-screening)
+ASSUMED_RATE = 13.0
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent.parent / "ml" / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "model.pkl"
@@ -63,6 +68,20 @@ ADVERSE_FACTOR_DESCRIPTIONS: Dict[str, str] = {
 }
 
 
+def calculate_amortized_emi(principal: float, term_months: int, annual_rate: float = ASSUMED_RATE) -> float:
+    """Calculate monthly EMI using exact amortization formula:
+
+    EMI = P * r * (1+r)^n / ((1+r)^n - 1)
+    where r = annual_rate / 12 / 100.
+    """
+    if principal <= 0 or term_months <= 0:
+        return 0.0
+    r = (annual_rate / 12.0) / 100.0
+    power = math.pow(1.0 + r, term_months)
+    emi = principal * r * (power / (power - 1.0))
+    return emi
+
+
 class ModelEngine:
     def __init__(self):
         self.model = None
@@ -77,38 +96,59 @@ class ModelEngine:
         self.model = joblib.load(MODEL_PATH)
         self.scaler = joblib.load(SCALER_PATH)
 
-    def evaluate_layer1(self, req: LoanApplicationRequest) -> Tuple[bool, List[str]]:
+    def evaluate_layer1(self, req: LoanApplicationRequest) -> Tuple[bool, List[str], float, float, float, float]:
+        """Layer 1 Rule Screening Gatekeeper.
+
+        Returns (passed, reasons, estimated_new_emi, total_monthly_debt, monthly_income, calculated_dti).
+        """
         reasons = []
-        effective_fico = req.get_effective_fico()
 
-        # Check FICO score threshold (580 industry cutoff)
-        if effective_fico < 580:
-            reasons.append(f"Low Credit Score ({effective_fico:.0f} < 580 threshold)")
+        # 1. Age Validation (Must be 18+ years old)
+        try:
+            dob = datetime.date.fromisoformat(req.date_of_birth)
+        except Exception:
+            dob = datetime.date(1995, 6, 15)
 
-        # Calculate DTI
-        if req.existing_monthly_debt is not None and req.annual_inc > 0:
-            estimated_emi = req.loan_amnt / float(req.term)
-            calculated_dti = ((req.existing_monthly_debt + estimated_emi) / (req.annual_inc / 12.0)) * 100.0
-            effective_dti = max(calculated_dti, req.dti)
-        else:
-            effective_dti = req.dti
+        today = datetime.date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
-        if effective_dti > 43.0:
-            reasons.append(f"High Debt-To-Income Ratio ({effective_dti:.1f}% > 43.0% CFPB threshold)")
+        if age < 18:
+            reasons.append("Applicant must be at least 18 years old to apply")
+
+        # 2. Amortized New EMI Calculation
+        loan_amount = req.get_effective_loan_amount()
+        term = req.term
+        annual_income = req.get_effective_annual_income()
+        existing_debt = req.get_effective_existing_debt()
+
+        estimated_new_emi = calculate_amortized_emi(loan_amount, term, ASSUMED_RATE)
+        total_monthly_debt = existing_debt + estimated_new_emi
+        monthly_income = annual_income / 12.0
+        calculated_dti = (total_monthly_debt / monthly_income) * 100.0 if monthly_income > 0 else 999.0
+
+        # 3. Hard-reject DTI Check (DTI > 43%)
+        if calculated_dti > 43.0:
+            reasons.append(f"Your debt-to-income ratio exceeds our lending threshold ({calculated_dti:.1f}% > 43.0%)")
 
         passed = len(reasons) == 0
-        return passed, reasons
+        return (
+            passed,
+            reasons,
+            round(estimated_new_emi, 2),
+            round(total_monthly_debt, 2),
+            round(monthly_income, 2),
+            round(calculated_dti, 2),
+        )
 
     def predict(self, req: LoanApplicationRequest) -> DecisionResponse:
         request_id = f"REQ-{uuid.uuid4().hex[:8].upper()}"
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        # Step 1: Layer 1 Rule Gatekeeper
-        l1_passed, l1_reasons = self.evaluate_layer1(req)
+        # Step 1: Layer 1 Rule Screening
+        l1_passed, l1_reasons, new_emi, total_debt, m_income, dti_pct = self.evaluate_layer1(req)
 
-        # Step 2: Layer 2 ML Model Prediction & Explainability
-        raw_arr, raw_dict = encode_application(req)
-        import pandas as pd
+        # Step 2: Layer 2 ML Model Prediction & Feature Encoding
+        raw_arr, raw_dict = encode_application(req, override_dti=dti_pct)
         raw_df = pd.DataFrame(raw_arr, columns=FEATURE_COLUMNS)
         scaled_arr = self.scaler.transform(raw_df)
         scaled_vec = scaled_arr[0]
@@ -126,7 +166,6 @@ class ModelEngine:
             raw_val = raw_dict[feature_name]
             sc_val = float(scaled_vec[idx])
             coef = float(coefficients[idx])
-            # Positive default_impact means this feature increases default risk
             default_impact = coef * sc_val
             direction = "INCREASES_RISK" if default_impact >= 0 else "REDUCES_RISK"
 
@@ -141,24 +180,26 @@ class ModelEngine:
                 )
             )
 
-        # Sort contributions by default impact (highest risk drivers first)
+        # Sort contributions by default impact
         sorted_contributions = sorted(contributions, key=lambda c: c.impact_score, reverse=True)
 
-        # Determine decision thresholds
+        # Status & Decision logic
         adverse_reasons: List[str] = []
         if not l1_passed:
+            status = "REJECTED"
             decision = "REJECTED"
             adverse_reasons.extend(l1_reasons)
         elif risk_score >= 0.75:
+            status = "PENDING_VERIFICATION"
             decision = "APPROVED"
         elif risk_score >= 0.65:
+            status = "PENDING_VERIFICATION"
             decision = "MANUAL_REVIEW"
         else:
+            status = "PENDING_VERIFICATION"
             decision = "REJECTED"
 
-        # Generate Adverse Action explanations if Rejected or Manual Review
-        if decision in ("REJECTED", "MANUAL_REVIEW"):
-            # Collect top default risk drivers
+        if decision in ("REJECTED", "MANUAL_REVIEW") and l1_passed:
             risk_drivers = [c for c in sorted_contributions if c.impact_score > 0]
             for c in risk_drivers[:4]:
                 msg = ADVERSE_FACTOR_DESCRIPTIONS.get(
@@ -167,7 +208,6 @@ class ModelEngine:
                 if msg not in adverse_reasons:
                     adverse_reasons.append(msg)
 
-        # Risk band category
         if risk_score >= 0.75:
             risk_band = "LOW"
         elif risk_score >= 0.65:
@@ -178,9 +218,16 @@ class ModelEngine:
         return DecisionResponse(
             request_id=request_id,
             applicant_id=req.applicant_id or "APP-1001",
+            applicant_name=req.full_name or "John Doe",
+            mock_pan=req.get_effective_mock_pan(),
+            status=status,
             decision=decision,
             layer1_passed=l1_passed,
             layer1_rejection_reasons=l1_reasons,
+            estimated_new_emi=new_emi,
+            total_monthly_debt=total_debt,
+            monthly_income=m_income,
+            calculated_dti=dti_pct,
             risk_score=round(risk_score, 4),
             default_probability=round(default_prob, 4),
             risk_band=risk_band,
